@@ -21,14 +21,16 @@ function mazeModel(rows, cols) {
     return maze;
 }
 
-function generateMaze(rows, cols) {
+async function generateMaze(rows, cols) {
     const maze = mazeModel(rows, cols); // Initializes the maze with walls
 
     // Start with all cells unvisited except a random starting point
     let startRow = Math.floor(Math.random() * rows);
     let startCol = Math.floor(Math.random() * cols);
     maze[startRow][startCol].visited = true;
+
     let unvisitedCount = rows * cols - 1;
+
 
     while (unvisitedCount > 0) {
         // Select a random unvisited cell
@@ -44,19 +46,10 @@ function generateMaze(rows, cols) {
 
         // Perform a random walk until we hit a visited cell
         while (!maze[currentRow][currentCol].visited) {
-            let directions = ['north', 'east', 'south', 'west'];
-            let dir = directions[Math.floor(Math.random() * directions.length)];
-            let nextRow = currentRow, nextCol = currentCol;
+            let {nextRow, nextCol} = await randomWalkLoop(rows, cols, currentRow, currentCol, maze);
 
-            switch (dir) {
-                case 'north': if (currentRow > 0) nextRow--; break;
-                case 'east':  if (currentCol < cols - 1) nextCol++; break;
-                case 'south': if (currentRow < rows - 1) nextRow++; break;
-                case 'west':  if (currentCol > 0) nextCol--; break;
-            }
-
-            // Loop detection and erasure
             let key = `${nextRow},${nextCol}`;
+
             if (visiting[key]) { // Loop detected
                 let loopStartIndex = path.findIndex(p => p.row === nextRow && p.col === nextCol);
                 path = path.slice(0, loopStartIndex + 1); // Erase loop
@@ -96,8 +89,6 @@ function generateMaze(rows, cols) {
             }
         }
         // After finishing the path, ensure the last cell is marked as visited
-        // This is critical because the while loop exits once it hits an already visited cell,
-        // but doesn't mark the last cell in the path as visited.
         let lastCell = path[path.length - 1];
         if (!maze[lastCell.row][lastCell.col].visited) {
             maze[lastCell.row][lastCell.col].visited = true;
@@ -105,7 +96,7 @@ function generateMaze(rows, cols) {
         }
     }
 
-// After generating the maze, choose start and goal locations
+    // After generating the maze, choose start and goal locations
     startRow = Math.floor(Math.random() * rows);
     startCol = Math.floor(Math.random() * cols);
     let goalRow, goalCol;
@@ -114,26 +105,48 @@ function generateMaze(rows, cols) {
         goalCol = Math.floor(Math.random() * cols);
     } while (goalRow === startRow && goalCol === startCol); // Ensure goal is different from start
 
-    const startCell = { row: startRow, col: startCol };
-    const goalCell = { row: goalRow, col: goalCol };
+    const startCell = {row: startRow, col: startCol};
+    const goalCell = {row: goalRow, col: goalCol};
 
-// Return the maze data structured similarly to the initial `mazeData`
-    return { rows, cols, startCell, goalCell, maze };
+    // Return the maze data structured similarly to the initial mazeData
+    return {rows, cols, startCell, goalCell, maze};
+}
+async function randomWalkLoop(rows, cols, currentRow, currentCol, mazeObj) {
+    await delay(1); // Simulate delay
+    let directions = ['north', 'east', 'south', 'west'];
+    let dir = directions[Math.floor(Math.random() * directions.length)];
+    let nextRow = currentRow, nextCol = currentCol;
+
+    switch (dir) {
+        case 'north': if (currentRow > 0) nextRow--; break;
+        case 'east':  if (currentCol < cols - 1) nextCol++; break;
+        case 'south': if (currentRow < rows - 1) nextRow++; break;
+        case 'west':  if (currentCol > 0) nextCol--; break;
+    }
+    return { nextRow, nextCol };
 }
 
 
 
 // ********** CONTROLLER ******** //
 
-// Generate maze similar to mazeData
-const generatedMaze =  generateMaze(20, 20)
-console.log(generatedMaze);
-drawMaze(generatedMaze);
+let generatedMaze = null;
 
+(async () => {
+    await setupMaze();
+})();
 
+async function setupMaze() {
+    generatedMaze = await generateMaze(10, 10);
+    console.log(generatedMaze);
+    drawMaze(generatedMaze);
+    fieldOfView(generatedMaze);
 
-document.addEventListener("keypress", keyPress);
-document.addEventListener("keyup", keyRelease);
+    // Now that the maze is ready, set up the event listeners
+    document.addEventListener("keypress", keyPress);
+    document.addEventListener("keyup", keyRelease);
+}
+
 
 const controls = {
     left: false,
@@ -141,6 +154,10 @@ const controls = {
     up: false,
     down: false,
 };
+
+function delay(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
 
 function keyPress(event) {
     switch (event.key) {
@@ -170,6 +187,10 @@ function keyRelease(event) {
 }
 
 function updatePosition(mazeData) {
+        if (!generatedMaze) {
+            console.error("Maze not initialized yet.");
+            return;
+        }
     const currentRow = mazeData.startCell.row;
     const currentCol = mazeData.startCell.col;
     const mazeRows = mazeData.rows;
@@ -202,16 +223,66 @@ function updatePosition(mazeData) {
     // Optionally, call a function to redraw or update the maze display here
     drawMaze(mazeData)
     winCheck(mazeData)
+    fieldOfView(generatedMaze)
 
 }
 
 function winCheck(mazeObj){
-    const start = mazeObj.startCell
+    const playerCell = mazeObj.startCell
     const goal = mazeObj.goalCell
 
-    if (start.row === goal.row && start.col === goal.col) {
+    if (playerCell.row === goal.row && playerCell.col === goal.col) {
         showWin()
     }
+}
+
+
+
+function fieldOfView(mazeObj) {
+    const playerCell = mazeObj.startCell;
+    const maze = mazeObj.maze;
+    const mazeRows = mazeObj.rows;
+    const mazeCols = mazeObj.cols;
+
+    console.log(playerCell);
+
+    function revealUntilWall(row, col, rowIncrement, colIncrement) {
+        let currentRow = row;
+        let currentCol = col;
+
+        while (true) {
+            // Check if there's a wall in the current cell in the direction we want to move
+            const currentCell = maze[currentRow][currentCol];
+            if ((rowIncrement === -1 && currentCell.north) ||
+                (rowIncrement === 1 && currentCell.south) ||
+                (colIncrement === -1 && currentCell.west) ||
+                (colIncrement === 1 && currentCell.east)) {
+                break; // There's a wall, so we can't reveal in this direction
+            }
+
+            // Move to the next cell
+            currentRow += rowIncrement;
+            currentCol += colIncrement;
+
+            // Check bounds after moving, to ensure we don't go out of the maze
+            if (currentRow < 0 || currentRow >= mazeRows || currentCol < 0 || currentCol >= mazeCols) {
+                break;
+            }
+
+            // Reveal the cell
+            changeCellColor(currentRow, currentCol, 'white', mazeCols);
+        }
+    }
+
+
+    // Initial reveal of the player's cell
+    changeCellColor(playerCell.row, playerCell.col, 'white', mazeCols);
+
+    // Reveal in all four directions
+    revealUntilWall(playerCell.row, playerCell.col, -1, 0); // North
+    revealUntilWall(playerCell.row, playerCell.col, 1, 0);  // South
+    revealUntilWall(playerCell.row, playerCell.col, 0, -1); // West
+    revealUntilWall(playerCell.row, playerCell.col, 0, 1);  // East
 }
 
 // ********** VIEW ************* //
@@ -253,10 +324,10 @@ function drawMaze(mazeData) {
     });
 }
 
-function changeCellColor(row, col, color) {
+function changeCellColor(row, col, color, numberOfColums) {
     const mazeElement = document.getElementById('maze');
     const cells = mazeElement.querySelectorAll('.cell');
-    const index = row * mazeData.cols + col;
+    const index = row * numberOfColums + col;
 
     if (index >= 0 && index < cells.length) {
         cells[index].style.backgroundColor = color;
